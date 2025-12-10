@@ -1,4 +1,5 @@
-
+// backend server for campus collab
+// started working on this last week, still needs some cleanup
 
 const express = require("express");
 const cors = require("cors");
@@ -6,7 +7,7 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 
 const app = express();
-app.use(cors());
+app.use(cors()); // needed for frontend to work
 app.use(express.json());
 
 
@@ -14,26 +15,30 @@ app.use(express.json());
 
 
 
+// database connection - using render postgres
 const pool = new Pool({
   connectionString: "postgresql://campus_collab_user:Z8q84I0WQLVdlDPGInx0Gfa2NJjLvhv2@dpg-d4oor87gi27c738lmon0-a.oregon-postgres.render.com/campus_collab",
   ssl: {
-    rejectUnauthorized: false,
+    rejectUnauthorized: false, // had to add this for render
   },
 });
 
 
 
 
-// root endpoint
+// root endpoint - just checking if server is up
 app.get("/", async (req, res) => res.send("Campus Collab"));
 
+// register new user
 app.post('/api/register', async (req,res) => {
   try{
     const {name,email,password } = req.body
+    // validate inputs
     if (!name || !email || !password){
       return res.status(400).json({ message: "All fields are required"})
     }
 
+    // check if email already exists
     const checkUser = await pool.query(
       'SELECT * FROM users WHERE email = $1',
       [email]
@@ -42,6 +47,7 @@ app.post('/api/register', async (req,res) => {
       return res.status(409).json({ message: "Email already exists"});
 
     }
+    // hash the password before saving
     const hashedPassword = await bcrypt.hash(password,10);
 
     // Only allow student registration - set role to 'student'
@@ -60,6 +66,7 @@ app.post('/api/register', async (req,res) => {
   } catch (err) {
     console.error(err);
     // If role column doesn't exist, try without it (for backward compatibility)
+    // had this issue when testing with old db
     if (err.message && err.message.includes('role')) {
       try {
         const hashedPassword = await bcrypt.hash(req.body.password,10);
@@ -83,9 +90,11 @@ app.post('/api/register', async (req,res) => {
   }
 })
 
+// login endpoint
 app.post('/api/login', async (req, res) =>{
   try{
     const { email, password } = req.body;
+    // make sure both fields are provided
     if (!email || !password ){
       return res
       .status(400)
@@ -93,6 +102,7 @@ app.post('/api/login', async (req, res) =>{
 
     }
 
+    // find user by email
     const userResult = await pool.query(
       'SELECT * FROM users WHERE email = $1',
       [email]
@@ -104,6 +114,7 @@ app.post('/api/login', async (req, res) =>{
     }
     const user = userResult.rows[0];
 
+    // compare passwords
     const isMatch = await bcrypt.compare(password,user.password);
     if (!isMatch){
       return res.status(401).json({ message: "invalid password"});
@@ -132,10 +143,12 @@ app.post('/api/login', async (req, res) =>{
 
 });
 
-// generate random team code
+// generate random team code - using random string
 function generateTeamCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
+  // this creates a 6 char code
 }
+// create a new team
 app.post('/api/team/create', async (req, res) => {
   try {
     const { teamName, user_Id } = req.body;
@@ -144,6 +157,7 @@ app.post('/api/team/create', async (req, res) => {
       return res.status(400).json({ message: "teamName and userId are required"});
 
     }
+// generate unique code for the team
 const teamCode = generateTeamCode();
 
     const newTeam = await pool.query(
@@ -154,6 +168,7 @@ const teamCode = generateTeamCode();
     );
     const teamId = newTeam.rows[0].id;
 
+    // add creator as first member
     await pool.query(
       `INSERT INTO team_members (team_id, user_id)
       VALUES ($1, $2)`,
@@ -173,6 +188,7 @@ const teamCode = generateTeamCode();
 
 });
 
+// join an existing team
 app.post('/api/team/join', async(req, res) => {
   try {
     const { teamId, user_Id } =req.body;
@@ -182,7 +198,7 @@ app.post('/api/team/join', async(req, res) => {
 
     }
 
-    // Look up team by ID
+    // Look up team by ID - make sure it exists
     const teamResult = await pool.query(
       `SELECT id FROM teams WHERE id = $1`,
       [teamId]
@@ -194,7 +210,7 @@ app.post('/api/team/join', async(req, res) => {
 
     const team_Id = teamResult.rows[0].id;
 
-    // Check if user is already a member
+    // Check if user is already a member - prevent duplicates
     const existingMember = await pool.query(
       `SELECT * FROM team_members WHERE team_id = $1 AND user_id = $2`,
       [team_Id, user_Id]
@@ -204,6 +220,7 @@ app.post('/api/team/join', async(req, res) => {
       return res.status(409).json({ message: "You are already a member of this team" });
     }
 
+    // add user to team
     await pool.query(
       `INSERT INTO team_members (team_id, user_id)
       VALUES ($1, $2)`,
@@ -220,10 +237,12 @@ app.post('/api/team/join', async(req, res) => {
 });
 
 
+// get all members of a team
 app.get('/api/team/:team_Id/members', async (req, res) => {
   try{
     const { team_Id } = req.params;
 
+    // verify team exists first
     const teamCheck = await pool.query(
       `SELECT * FROM teams WHERE id = $1`,
       [team_Id]
@@ -233,6 +252,7 @@ app.get('/api/team/:team_Id/members', async (req, res) => {
       return res.status(404).json({ message: "Team not found" });
 
     }
+    // get all members with their user info
     const membersResult = await pool.query(
       `SELECT u.id, u.name, u.email
       FROM team_members tm
@@ -255,14 +275,17 @@ app.get('/api/team/:team_Id/members', async (req, res) => {
 });
 
 
+// create a new task
 app.post('/api/task', async (req, res) => {
   const { team_id, title, description, assigned_to, due_date, status } = req.body;
 
+  // validate required fields
   if (!team_id || !title) {
     return res.status(400).json({ message: "team_id and title are required" });
 
   }
   try{
+    // insert task into database
     const result = await pool.query(
       `INSERT INTO tasks (team_id, title, description,assigned_to, due_date, status)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -282,15 +305,18 @@ app.post('/api/task', async (req, res) => {
   }
 });
 
+// update an existing task
 app.put('/api/task/:id', async (req, res) =>{
   const { id } = req.params;
   const { title, description, assigned_to, due_date, status } = req.body;
 
+  // need at least one field to update
   if (!title && !description && !assigned_to && !due_date && !status) {
     return res.status(400).json({ message: "At least one field is required to update"});
 
   }
   try{
+    // build dynamic update query
     const fields =[];
     const values =[];
     let index = 1;
@@ -322,6 +348,7 @@ if (status) {
   }
   values.push(id);
 
+  // build and execute update query
   const query =`UPDATE tasks SET ${fields.join(', ')} WHERE id =$${index} RETURNING *`;
   const result = await pool.query(query,values);
 
@@ -342,10 +369,12 @@ if (status) {
 });
 
 
+// delete a task
 app.delete('/api/task/:id', async (req, res) => {
   try{
     const taskId = req.params.id;
 
+    // delete and return the deleted task
     const result = await pool.query(
       `DELETE FROM tasks WHERE id = $1 RETURNING *`,
       [taskId]
@@ -368,10 +397,12 @@ app.delete('/api/task/:id', async (req, res) => {
   }
 });
 
+// get all tasks for a team
 app.get('/api/task/team/:teamId', async (req, res) => {
   try{
     const {teamId } = req.params;
 
+    // get tasks with assigned user names, sorted by status
     const result = await pool.query(
       `SELECT t.*, u.name as assigned_name
        FROM tasks t
@@ -403,8 +434,10 @@ app.get('/api/task/team/:teamId', async (req, res) => {
   }
 });
 
+// health check endpoint
 app.get('/api/health', async (req, res) => {
   try{
+    // simple db check
     await pool.query('SELECT 1');
     res.json({ ok: true });
 
@@ -415,7 +448,7 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Get all teams (for dashboard)
+// Get all teams (for dashboard) - returns all teams
 app.get('/api/team', async (req, res) => {
   try {
     const result = await pool.query(
@@ -430,7 +463,7 @@ app.get('/api/team', async (req, res) => {
   }
 });
 
-// Get team details by ID
+// Get team details by ID - single team info
 app.get('/api/team/:teamId', async (req, res) => {
   try {
     const { teamId } = req.params;
@@ -450,7 +483,7 @@ app.get('/api/team/:teamId', async (req, res) => {
   }
 });
 
-// Get all users (for task assignment)
+// Get all users (for task assignment dropdown)
 app.get('/api/users', async (req, res) => {
   try {
     const result = await pool.query(
@@ -463,18 +496,18 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// Get team statistics (for dashboard)
+// Get team statistics (for dashboard) - aggregates all the stats
 app.get('/api/team/:teamId/stats', async (req, res) => {
   try {
     const { teamId } = req.params;
 
-    // Get total tasks
+    // Get total tasks count
     const totalTasks = await pool.query(
       `SELECT COUNT(*) as count FROM tasks WHERE team_id = $1`,
       [teamId]
     );
 
-    // Get tasks by status
+    // Get tasks grouped by status
     const tasksByStatus = await pool.query(
       `SELECT status, COUNT(*) as count 
        FROM tasks 
@@ -483,13 +516,13 @@ app.get('/api/team/:teamId/stats', async (req, res) => {
       [teamId]
     );
 
-    // Get member count
+    // Get member count for the team
     const memberCount = await pool.query(
       `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
       [teamId]
     );
 
-    // Get tasks assigned to each member
+    // Get tasks assigned to each member with completion stats
     const tasksByMember = await pool.query(
       `SELECT u.id, u.name, u.email, 
               COUNT(t.id) as task_count,
@@ -521,6 +554,7 @@ app.get('/api/team/:teamId/stats', async (req, res) => {
 });
 
 
+// test database connection on startup
 pool.connect()
   .then((client) => {
     console.log("Connected to Database");
@@ -530,6 +564,7 @@ pool.connect()
     console.error("Could not connect to Database", err);
   });
 
+// start server
 const PORT = 4000;
 app.listen(PORT, () => (
     console.log(`Server running on ${PORT}`)

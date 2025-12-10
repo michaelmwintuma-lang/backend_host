@@ -8,15 +8,6 @@ This is the backend API server for **Campus Collab**, a team collaboration and t
 
 ---
 
-##  Deployment
-
-<!-- UPDATE WITH YOUR ACTUAL DEPLOYMENT URL -->
-
-**Live API URL:** https://backend-host-ykn3.onrender.com/api
-
-**Health Check:** https://backend-host-ykn3.onrender.com/api/health
-
-**Repository:** https://github.com/michaelmwintuma-lang/backend-host
 
 ---
 
